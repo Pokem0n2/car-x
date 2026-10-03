@@ -44,12 +44,30 @@ async function main() {
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
   canvas { display: block; }
-  #info-text { position: fixed; top: 10px; left: 10px; color: #fff; font: 14px/1.5 monospace;
-               text-shadow: 0 1px 2px #000; pointer-events: none; user-select: none; }
+  #hud { position: fixed; top: 10px; right: 10px; z-index: 10; display: flex; flex-direction: column;
+         gap: 6px; align-items: flex-end; font: 13px/1.4 system-ui, sans-serif; user-select: none; }
+  #hud button { background: rgba(20,20,20,.72); color: #fff; border: 1px solid #555;
+                border-radius: 4px; padding: 4px 10px; cursor: pointer; }
+  #hud button:hover { background: rgba(60,60,60,.8); }
+  #speed-row { display: flex; align-items: center; gap: 6px; background: rgba(20,20,20,.72);
+               border: 1px solid #555; border-radius: 4px; padding: 4px 8px; color: #fff; }
+  #speed-row.disabled { opacity: .45; }
+  #speed-slider { width: 130px; }
+  #speed-input { width: 54px; background: #111; color: #fff; border: 1px solid #555;
+                 border-radius: 3px; padding: 2px 4px; font: inherit; }
 </style>
 </head>
 <body>
-<div id="info-text">Car using only physics<br />(Feel free to improve this example)<br />WASD drive</div>
+<div id="hud">
+  <button id="btn-view">视角:俯视锁定</button>
+  <button id="btn-throttle">油门:未锁定</button>
+  <div id="speed-row" class="disabled">
+    <span>速度</span>
+    <input id="speed-slider" type="range" min="0" max="1" step="0.01" value="0.3" disabled />
+    <input id="speed-input" type="number" min="0" max="1" step="0.01" value="0.3" disabled />
+    <span>m/s</span>
+  </div>
+</div>
 <script>
 /* ammo.js — Bullet Physics compiled to JavaScript (asm.js), zlib licensed.
    Built by @yandeu (https://github.com/yandeu/ammo.js), based on Bullet 2.89. */
