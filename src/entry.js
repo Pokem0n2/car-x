@@ -44,21 +44,27 @@ const AXIS_Z = 0.15                       // front steering sub-axles offset
 // sits inside the body width (1.77), and wheels/axles must not collide with the chassis
 // (they are not directly constrained pairs, so ammo would push them apart)
 const PLATE_W = 1.28
-const SPAWN_Y = GROUND_TOP() + WHEEL_R + 0.01
-const PLATE_Y = SPAWN_Y                   // plate center at axle height (constraint-friendly)
+// spawn at the measured rest pose (no drop transient): tires just touching the ground,
+// chassis at its settled sag height
+const SPAWN_Y = GROUND_TOP() + WHEEL_R
+const PLATE_Y = SPAWN_Y - 0.015
 
 function GROUND_TOP() { return 0.5 }      // add.ground() box: 1 thick, centered at y → surface +0.5
 
 // ---------- site layout (meters; +z = down-screen) ----------
-const SPAWN_Z = -2.65                                              // center of the main slot
-const SLOT1 = { x0: -1.2, x1: 1.2, z0: -5.15, z1: -0.15 }          // 纵向 2400×5300
-const SLOT2 = { x0: -7.5, x1: -2.2, z0: 1.2, z1: 3.6 }             // 横向 5300×2400
+// Inverted-T three-way junction, all markings are lines only:
+//   A (-7.5,0)-(-1.5,0) 6000   B (-1.5,0)-(-1.5,-6) 6000
+//   C ( 1.5,0)-( 1.5,-6) 6000  D ( 1.5,0)-( 7.5,0) 6000
+//   E (-7.5,3)-( 7.5,3) 15000  (A/D and E are 3000 apart vertically, B/C 3000 horizontally)
+const SPAWN_Z = -3.0                                             // center of the main slot
+const SLOT1 = { x0: -1.2, x1: 1.2, z0: -5.65, z1: -0.35 }        // 纵向 2400×5300
+const SLOT2 = { x0: -7.5, x1: -2.2, z0: 0.3, z1: 2.7 }           // 横向 5300×2400
 const ROAD = [
-  [-1.5, -5.3, -1.5, 0],    // stem edge, left
-  [1.5, -5.3, 1.5, 0],      // stem edge, right
-  [-7.5, 0, -1.5, 0],       // crossbar, left arm (6000)
-  [1.5, 0, 7.5, 0],         // crossbar, right arm (6000)
-  [-7.5, 3.7, 7.5, 3.7]     // south road edge (15000)
+  [-1.5, -6, -1.5, 0],    // B
+  [1.5, -6, 1.5, 0],      // C
+  [-7.5, 0, -1.5, 0],     // A
+  [1.5, 0, 7.5, 0],       // D
+  [-7.5, 3, 7.5, 3]       // E
 ]
 
 // ---------- world / camera ----------
@@ -409,7 +415,6 @@ class MainScene extends Scene3D {
 
   // ---------- lifecycle ----------
   async create() {
-    this._spawnT = Date.now()
     this.warpSpeed('light') // lights only
     this.scene.background = new THREE.Color(0x000000)
 
@@ -526,6 +531,30 @@ class MainScene extends Scene3D {
       this.makeTrail(wheelFrontLeft, 0x22cc44)
     ]
 
+    // bodies parked after 2s idle: sideways ammo cylinders jitter-walk on their contact
+    // edges forever (the motors keep the island awake), so while parked we zero every
+    // body's velocities each frame — the only way the car stays exactly where it was left
+    this.allBodies = [
+      this.plate.body,
+      wheelBackRight.body, wheelBackLeft.body, wheelFrontRight.body, wheelFrontLeft.body,
+      rotorBackRight.body, rotorBackLeft.body, rotorFrontRight.body, rotorFrontLeft.body,
+      axisBackOne.body, axisFrontOne.body, axisFrontTwo.body
+    ]
+    this._parked = false
+    this._idleSince = 0
+    this._zeroV = new Ammo.btVector3(0, 0, 0)
+
+    // while parked, stop stepping the physics world entirely: sideways ammo cylinders
+    // jitter-walk on their contact edges forever (velocity zeroing cannot stop the
+    // contact solver's positional correction), and the car is the only dynamic body here
+    const physicsAny = this.physics
+    if (physicsAny && typeof physicsAny.update === 'function') {
+      const origUpdate = physicsAny.update.bind(physicsAny)
+      physicsAny.update = t => {
+        if (!this._parked) origUpdate(t)
+      }
+    }
+
     const slider = document.getElementById('speed-slider')
     const input = document.getElementById('speed-input')
     const setSpeed = v => {
@@ -550,7 +579,39 @@ class MainScene extends Scene3D {
     window.carx = this
   }
 
+  parkCar() {
+    this._parked = true
+    for (const b of this.allBodies) {
+      b.ammo.setLinearVelocity(this._zeroV)
+      b.ammo.setAngularVelocity(this._zeroV)
+    }
+  }
+
+  unparkCar() {
+    this._parked = false
+    this._idleSince = 0
+  }
+
   update() {
+    // park: after 2s without input, pin every body in place each frame (positions freeze)
+    const inputActive =
+      this.keys.w || this.keys.a || this.keys.s || this.keys.d || this.keys.space ||
+      this.cruiseDir !== 0 || Math.abs(this.tiltSteer) > 0.005
+    if (this._parked) {
+      if (!inputActive) {
+        this.parkCar() // re-zero: gravity re-adds velocity every physics step
+        this.updateCamera()
+        return
+      }
+      this.unparkCar()
+    } else if (inputActive) {
+      this._idleSince = 0
+    } else if (!this._idleSince) {
+      this._idleSince = Date.now()
+    } else if (Date.now() - this._idleSince > 2000) {
+      this.parkCar()
+    }
+
     // effective driving direction
     let dir = 0
     if (this.throttleLocked) dir = this.cruiseDir
@@ -562,8 +623,9 @@ class MainScene extends Scene3D {
     if (dir !== 0) this.driveDir = dir
 
     const speed = 40
-    // stronger idle brake while the constraints settle, so the car stays in its slot
-    const idleImpulse = Date.now() - this._spawnT < 3000 ? 1.0 : 0.05
+    // strong idle brake: the undamped dof suspension keeps micro-oscillating, and a weak
+    // brake (the original 0.05) lets that noise ratchet the wheels into a steady creep
+    const idleImpulse = 200
 
     if (this.throttleLocked) {
       const vel = this.cruiseDir !== 0 ? -this.cruiseDir * (this.cruiseSpeed / WHEEL_R) : 0
@@ -599,6 +661,10 @@ class MainScene extends Scene3D {
     for (const t of this.trails) this.appendTrail(t, t.wheel.position.x, t.wheel.position.z)
 
     // camera
+    this.updateCamera()
+  }
+
+  updateCamera() {
     const p = this.plate.position
     if (this.viewLocked) {
       this.topCam.position.set(p.x, CAM_HEIGHT, p.z)
