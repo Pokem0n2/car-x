@@ -1,8 +1,8 @@
 {
   "name": "car-x",
-  "version": "1.1.0",
+  "version": "1.5.7",
   "private": true,
-  "description": "Car using only physics constraints — enable3d example as a single-file offline HTML",
+  "description": "Car using only physics constraints \u2014 enable3d example as a single-file offline HTML",
   "type": "commonjs",
   "scripts": {
     "build": "node tools/build.mjs"

@@ -34,9 +34,9 @@ async function main() {
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-<title>car-x — Car using Physics Constraints</title>
+<title>car-x v1.5.7 — Car using Physics Constraints</title>
 <!--
-  car-x — Car using only physics constraints (single-file offline build)
+  car-x v1.5.7 — Car using only physics constraints (single-file offline build)
   Based on the enable3d example "car-using-physics-constraints":
   https://github.com/enable3d/enable3d.github.io/blob/master/src/examples/car-using-physics-constraints.html
   enable3d (MIT) by yandeu · ammo.js (zlib) · rebuild with: npm run build
@@ -44,29 +44,31 @@ async function main() {
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
   canvas { display: block; }
-  #hud { position: fixed; top: 10px; right: 10px; z-index: 10; display: flex; flex-direction: column;
-         gap: 6px; align-items: flex-end; font: 13px/1.4 system-ui, sans-serif; user-select: none; }
+  #hud { position: fixed; top: 10px; right: 10px; z-index: 10; display: flex; flex-direction: row;
+         gap: 6px; align-items: center; font: 13px/1.4 system-ui, sans-serif; user-select: none; }
   #hud button { background: rgba(20,20,20,.72); color: #fff; border: 1px solid #555;
-                border-radius: 4px; padding: 4px 10px; cursor: pointer; }
+                border-radius: 4px; padding: 4px 10px; cursor: pointer;
+                height: 34px; min-width: 66px; }   /* v1.5.7: equal height, stable width */
   #hud button:hover { background: rgba(60,60,60,.8); }
   #speed-row { display: flex; align-items: center; gap: 6px; background: rgba(20,20,20,.72);
-               border: 1px solid #555; border-radius: 4px; padding: 4px 8px; color: #fff; }
+               border: 1px solid #555; border-radius: 4px; padding: 4px 8px; color: #fff;
+               height: 24px; box-sizing: content-box; }  /* 24+8+2 = 34px total */
   #speed-row.disabled { opacity: .45; }
   #speed-slider { width: 130px; }
-  #speed-input { width: 54px; background: #111; color: #fff; border: 1px solid #555;
+  #speed-input { width: 30px; background: #111; color: #fff; border: 1px solid #555;
                  border-radius: 3px; padding: 2px 4px; font: inherit; }
 </style>
 </head>
 <body>
 <div id="hud">
-  <button id="btn-view">视角:俯视锁定</button>
-  <button id="btn-throttle">油门:未锁定</button>
-  <div id="speed-row" class="disabled">
+  <button id="btn-view">俯视</button>
+  <div id="speed-row">
     <span>速度</span>
-    <input id="speed-slider" type="range" min="0" max="1" step="0.01" value="0.3" disabled />
-    <input id="speed-input" type="number" min="0" max="1" step="0.01" value="0.3" disabled />
+    <input id="speed-slider" type="range" min="0" max="5" step="0.05" value="0.3" />
+    <input id="speed-input" type="number" min="0" max="5" step="0.05" value="0.3" />
     <span>m/s</span>
   </div>
+  <button id="btn-throttle">油门:M</button>
 </div>
 <script>
 /* ammo.js — Bullet Physics compiled to JavaScript (asm.js), zlib licensed.
