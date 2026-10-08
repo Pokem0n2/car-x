@@ -34,9 +34,9 @@ async function main() {
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-<title>car-x v1.5.7 — Car using Physics Constraints</title>
+<title>car-x v1.6.6 — Car using Physics Constraints</title>
 <!--
-  car-x v1.5.7 — Car using only physics constraints (single-file offline build)
+  car-x v1.6.6 — Car using only physics constraints (single-file offline build)
   Based on the enable3d example "car-using-physics-constraints":
   https://github.com/enable3d/enable3d.github.io/blob/master/src/examples/car-using-physics-constraints.html
   enable3d (MIT) by yandeu · ammo.js (zlib) · rebuild with: npm run build
@@ -48,7 +48,7 @@ async function main() {
          gap: 6px; align-items: center; font: 13px/1.4 system-ui, sans-serif; user-select: none; }
   #hud button { background: rgba(20,20,20,.72); color: #fff; border: 1px solid #555;
                 border-radius: 4px; padding: 4px 10px; cursor: pointer;
-                height: 34px; min-width: 66px; }   /* v1.5.7: equal height, stable width */
+                height: 34px; min-width: 66px; }   /* v1.6.6: equal height, stable width */
   #hud button:hover { background: rgba(60,60,60,.8); }
   #speed-row { display: flex; align-items: center; gap: 6px; background: rgba(20,20,20,.72);
                border: 1px solid #555; border-radius: 4px; padding: 4px 8px; color: #fff;

@@ -20,7 +20,7 @@
 // - all strip end caps grow half-thickness past every corner: the outside quadrant
 //   of each slot corner is a full overlap square (no notch at any scale / DPR)
 // v1.3.1: fix slot corner notches on the outside quadrant (visible at phone DPR)
-// v1.6.5 changes (size pass 2, no behavior change):
+// v1.6.6 changes (size pass 2, no behavior change):
 // - payload compression gzip -> LZMA-alone (ammo 616KB->432KB, app 295KB->244KB)
 // - base64 -> HTML-safe base85 custom alphabet (no <>&'"/ chars, so the
 //   payload can never terminate a <script> block)
