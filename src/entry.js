@@ -20,6 +20,44 @@
 // - all strip end caps grow half-thickness past every corner: the outside quadrant
 //   of each slot corner is a full overlap square (no notch at any scale / DPR)
 // v1.3.1: fix slot corner notches on the outside quadrant (visible at phone DPR)
+// v1.6.5 changes (size pass 2, no behavior change):
+// - payload compression gzip -> LZMA-alone (ammo 616KB->432KB, app 295KB->244KB)
+// - base64 -> HTML-safe base85 custom alphabet (no <>&'"/ chars, so the
+//   payload can never terminate a <script> block)
+// - decompressor: inlined 7KB pure-JS LZMA decoder (lzma-d-min); fflate
+//   dropped. Still zero eval/wasm/DecompressionStream — CSP-safe like v1.5.7
+// - 1.22MB -> 854KB total (-77% vs v1.5.7's 3.70MB)
+// v1.6.3 changes (tilt steering dead on some browsers):
+// - activation retried on EVERY touch until real sensor data flows (was
+//   once-only on first touchstart: if that touch raced async boot, or the
+//   iOS permission prompt got dismissed, tilt stayed dead forever)
+// - deviceorientationabsolute wired (some browsers only fire that variant)
+// - devicemotion fallback: when no orientation channel ever fires, the
+//   gravity vector is rebuilt from accelerationIncludingGravity and fed
+//   into the SAME screen-projection + deadzone + mapping pipeline
+// v1.6.2 changes (compatibility fixes over v1.6.0/1.6.1):
+// - physics reverted to the SAME asm.js binary as v1.5.7 (the wasm build
+//   spawned cars with a leftward drift + non-zero rest angles on some
+//   browsers — different Bullet compile, different solver init; verified
+//   spawn drift 2mm / 0.05deg with asm.js)
+// - boot no longer uses eval()/WebAssembly/DecompressionStream: payloads
+//   run via <script> element injection (CSP 'unsafe-inline' webviews like
+//   the Feishu previewer allow exactly what v1.5.7 used) and decompress
+//   with inlined fflate (pure JS, also fixes old browsers)
+// - size: 3.70MB (v1.5.7) -> 1.22MB, still -67%
+// v1.6.1 changes:
+// - grass texture 512x512 JPEG q? (98KB / 131KB base64) -> 128x128 q30
+//   (1.3KB / 1.8KB base64). Tile covers 10 world units (repeat 50x on a
+//   500x500 ground) so 512px detail was invisible; visual probe confirmed
+//   noisy-textured grass still renders identically at gameplay zoom.
+// v1.6.0 changes (SIZE OPTIMIZATION — same behavior, 3.70MB -> 0.93MB):
+// - physics: asm.js ammo (2.49MB text) -> wasm ammo (651KB binary), same
+//   Bullet classes; glue+wasm embedded gzip+base64, decompressed at boot
+//   via DecompressionStream (Chrome 80+/Safari 16.4+/Firefox 113+)
+// - app bundle (enable3d+three+entry) embedded gzip+base64 instead of text
+// - boot order: decompress glue -> define Ammo -> decompress app -> eval
+//   -> window.__boot(Project, MainScene) starts the scene
+// - cold start ~0.35s vs 2-4s asm.js parse; no code paths removed
 // v1.5.7 changes:
 // - SPEED INPUT: Enter / NumpadEnter confirms the value AND blurs (mobile
 //   keyboards have no Tab key; canvas-area mousedown/touchstart also blur
@@ -606,9 +644,13 @@ class MainScene extends Scene3D {
     // touch: 1-finger tap = throttle, 2-finger tap = reverse, pinch = zoom,
     // 1-finger drag = orbit (free view)
     let tg = null
+    // v1.6.3: activation used to fire ONCE on first touch — if that first
+    // touch landed before the (async) game boot finished, or the iOS
+    // permission prompt was dismissed, tilt stayed dead forever. Now we
+    // re-request on EVERY touch until real sensor data has arrived.
+    let tiltDataSeen = false
     const requestTilt = () => {
-      if (this.#tiltRequested) return
-      this.#tiltRequested = true
+      if (tiltDataSeen) return
       if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
         DeviceOrientationEvent.requestPermission().catch(() => {})
       }
@@ -737,47 +779,56 @@ class MainScene extends Scene3D {
         [-cb * sg, sb, cb * cg]
       ]
     }
-    window.addEventListener('deviceorientation', e => {
-      if (e.beta === null && e.gamma === null) return
-      // v1.4.8 FIX: event angles are DEGREES; rotm's cos/sin expect RADIANS.
-      // Feeding degrees straight in scrambled the gravity vector — physical
-      // tilts of 3–6° landed inside the deadzone or flipped sign every few
-      // degrees (sin of N radians), so steering went dead on the phone.
-      const D2R = Math.PI / 180
-      // rotm expects (alpha, beta, gamma) — the ZXY template's axes are
-      // hard-wired to that order; passing (beta, gamma, alpha) scrambles it
-      // (found by numeric probe: pure-beta portrait tilt produced 0.000).
-      const R = rotm((e.alpha ?? 0) * D2R, (e.beta ?? 0) * D2R, (e.gamma ?? 0) * D2R)
-      // gravity in DEVICE coords: world down (0,0,-1) pulled back through R
-      const gd = [-R[2][0], -R[2][1], -R[2][2]]
-      // device → screen by orientation angle θ (rotation about the screen normal)
-      // v1.4.10 (#1): some mobile browsers report screen.orientation.angle
-      // as 0/undefined and window.orientation is removed — then landscape
-      // reads portrait axes and steering feels dead/wrong. Track the angle
-      // from BOTH the orientation API events AND matchMedia fallback.
-      const ang = MainScene.getScreenAngle() * Math.PI / 180
-      const cs = Math.cos(ang), sn = Math.sin(ang)
-      // screen-right axis in device coords at orientation angle θ (OS angle is
-      // CCW, so the screen basis rotates by −θ; verified numerically for
+    const applyGravity = (gx, gy, gz) => {
+      // gravity in DEVICE coords → screen by orientation angle θ (OS angle
+      // is CCW, so the screen basis rotates by −θ; verified numerically for
       // 0/90/270: portrait gamma±10 → ±0.333, land90 beta±10 → ±0.333,
       // land270 mirrored, long-axis roll → 0)
-      const gx = gd[0] * cs - gd[1] * sn        // gravity along screen-right
+      const ang = MainScene.getScreenAngle() * Math.PI / 180
+      const cs = Math.cos(ang), sn = Math.sin(ang)
       // STEERING DIP (same metaphor in every orientation): dip the screen's
       // RIGHT edge = steer right, dip LEFT = steer left — like a steering
-      // wheel, regardless of portrait/landscape (the old axis-pick made
-      // portrait steer by tray-pitch and landscape by wheel-roll: two
-      // different motions for the same game — the user's complaint).
-      const raw = gx
+      // wheel, regardless of portrait/landscape.
+      const raw = gx * cs - gy * sn          // gravity along screen-right
       // raw is a unit-vector component (sin of tilt); convert to DEGREES before
       // applying the 3° deadzone / 30° full-lock scaling
       const deg = Math.asin(Math.max(-1, Math.min(1, raw))) * 180 / Math.PI
-      // v1.4.7 tilt mapping (user spec): deadzone 3°, then the phone x-axis
-      // tilt maps 3°→8° linearly onto 0→FULL LOCK (= the Ackermann OUTER front
-      // wheel max angle 30.95°, since steerIn=1 saturates the outer wheel).
-      // Beyond 8° of tilt = full lock (clamped).
+      // deadzone 3°, then 3°→8° maps onto 0→FULL LOCK (v1.4.7 user spec)
       const a = Math.abs(deg) < 3 ? 0 : (Math.abs(deg) - 3) / 5
-      const s = Math.max(0, Math.min(1, a)) * Math.sign(deg)
-      this.tiltSteer = s
+      this.tiltSteer = Math.max(0, Math.min(1, a)) * Math.sign(deg)
+    }
+    // v1.6.3 FIX: some browsers never fire deviceorientation (sensor locked
+    // by policy/older webview) but DO fire devicemotion — reconstruct the
+    // gravity vector from accelerationIncludingGravity (same math pipeline).
+    // deviceorientationabsolute is wired too (same angle convention).
+    let motionSeen = false
+    window.addEventListener('devicemotion', e => {
+      const g = e.accelerationIncludingGravity
+      if (!g || g.x === null || g.y === null || g.z === null) return
+      motionSeen = true; tiltDataSeen = true
+      if (orientationSeen) return          // orientation channel wins when alive
+      const n = Math.hypot(g.x, g.y, g.z)
+      if (n < 0.1) return
+      // devicemotion gravity: phone flat → z≈-9.8 (W3C: z up in screen plane).
+      // The orientation math expects down-vector ≈ (0,0,-1) at flat — same
+      // sign convention, just normalize.
+      applyGravity(-g.x / n, -g.y / n, -g.z / n)
+    })
+    let orientationSeen = false
+    window.addEventListener('deviceorientationabsolute', e => {
+      if (e.beta === null && e.gamma === null) return
+      orientationSeen = true; tiltDataSeen = true
+      const D2R = Math.PI / 180
+      const R = rotm((e.alpha ?? 0) * D2R, (e.beta ?? 0) * D2R, (e.gamma ?? 0) * D2R)
+      applyGravity(-R[2][0], -R[2][1], -R[2][2])
+    })
+    window.addEventListener('deviceorientation', e => {
+      if (e.beta === null && e.gamma === null) return
+      orientationSeen = true; tiltDataSeen = true
+      // v1.4.8 FIX: angles are DEGREES; rotm expects (alpha,beta,gamma) RADIANS
+      const D2R = Math.PI / 180
+      const R = rotm((e.alpha ?? 0) * D2R, (e.beta ?? 0) * D2R, (e.gamma ?? 0) * D2R)
+      applyGravity(-R[2][0], -R[2][1], -R[2][2])
     })
   }
   // ---------- lifecycle ----------
@@ -1281,6 +1332,10 @@ class MainScene extends Scene3D {
   }
 }
 
-// ammo.js is inlined as a plain <script> before this bundle runs,
-// so Ammo() is available as a global — same contract PhysicsLoader provides.
-Ammo().then(() => new Project({ scenes: [MainScene], maxSubSteps: 4, fixedTimeStep: 1 / 120 }))
+// Boot: the single-file build decompresses payloads then calls window.__boot()
+// with the ready Ammo factory. Plain builds keep the old Ammo() contract.
+if (typeof window.__boot === 'function') {
+  window.__boot(Project, MainScene)
+} else if (typeof Ammo === 'function') {
+  Ammo().then(() => new Project({ scenes: [MainScene], maxSubSteps: 4, fixedTimeStep: 1 / 120 }))
+}
